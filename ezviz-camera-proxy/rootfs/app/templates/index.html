@@ -149,7 +149,11 @@
         <h2 class="font-semibold text-sm uppercase tracking-wide" style="color:var(--ha-text-muted)">Live View</h2>
         <div class="flex items-center gap-3">
           <span class="text-xs" style="color:var(--ha-text-muted)">
-            Auto-refresh: <span class="font-mono" id="countdown">{{ snapshot_interval }}</span>s
+            {% if snapshot_interval > 0 %}
+            Auto-refresh: <span class="font-mono" id="countdown">{{ snapshot_interval }}s</span>
+            {% else %}
+            Auto-refresh: off (on demand)
+            {% endif %}
           </span>
           <button class="btn-primary flex items-center gap-2" id="refresh-btn" onclick="manualRefresh()">
             <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -259,14 +263,14 @@
         </p>
         <code class="text-xs break-all block p-2 rounded"
               style="background:rgba(255,255,255,0.05); color:var(--ha-accent); font-family:monospace;">
-          http://localhost:8099/api/snapshot
+          http://{{ addon_host }}:8099/api/snapshot
         </code>
         <p class="text-xs mt-2" style="color:var(--ha-text-muted)">
           Or for MJPEG:
         </p>
         <code class="text-xs break-all block p-2 rounded"
               style="background:rgba(255,255,255,0.05); color:var(--ha-accent); font-family:monospace;">
-          http://localhost:8099/api/stream
+          http://{{ addon_host }}:8099/api/stream
         </code>
       </div>
 
@@ -357,8 +361,21 @@
     let countdownTimer;
     let refreshing = false;
 
+    // e.g. 45 -> "45s", 93784 -> "1d 2h 3m 4s"; zero units are omitted
+    function formatDuration(totalSeconds) {
+      const units = [['d', 86400], ['h', 3600], ['m', 60], ['s', 1]];
+      const parts = [];
+      let rest = totalSeconds;
+      for (const [label, size] of units) {
+        const n = Math.floor(rest / size);
+        rest %= size;
+        if (n > 0) parts.push(n + label);
+      }
+      return parts.length ? parts.join(' ') : '0s';
+    }
+
     function updateCountdown() {
-      document.getElementById('countdown').textContent = countdown;
+      document.getElementById('countdown').textContent = formatDuration(countdown);
       if (countdown <= 0) {
         refreshSnapshot(false);
         countdown = {{ snapshot_interval }};
@@ -369,7 +386,9 @@
 
     function startCountdown() {
       clearInterval(countdownTimer);
+      if (SNAPSHOT_INTERVAL === 0) return;  // on-demand mode: no auto-refresh
       countdown = {{ snapshot_interval }};
+      document.getElementById('countdown').textContent = formatDuration(countdown);
       countdownTimer = setInterval(updateCountdown, 1000);
     }
 
@@ -404,6 +423,8 @@
           btn.disabled = false;
           if (overlay) overlay.style.display = 'none';
           if (manual) startCountdown();
+          // In on-demand mode the refresh also updated status and events
+          if (SNAPSHOT_INTERVAL === 0) { pollStatus(); pollEvents(); }
         });
     }
 

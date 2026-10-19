@@ -25,7 +25,11 @@ mkdir -p /data/snapshots
 
 bashio::log.info "Camera serial: ${CAMERA_SERIAL}"
 bashio::log.info "Ezviz region: ${EZVIZ_REGION}"
-bashio::log.info "Snapshot interval: ${SNAPSHOT_INTERVAL}s"
+if [ "${SNAPSHOT_INTERVAL}" = "0" ]; then
+    bashio::log.info "Snapshot interval: on demand (no background polling)"
+else
+    bashio::log.info "Snapshot interval: ${SNAPSHOT_INTERVAL}s"
+fi
 bashio::log.info "Ingress entry: ${INGRESS_ENTRY}"
 
 # Start Flask application

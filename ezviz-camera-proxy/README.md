@@ -65,9 +65,12 @@ enable_mqtt_events: true
 camera:
   - platform: generic
     name: "HP2 Door Viewer"
-    still_image_url: "http://localhost:8099/api/snapshot"
-    stream_source: "http://localhost:8099/api/stream"
+    still_image_url: "http://ADDON_HOST:8099/api/snapshot"
+    stream_source: "http://ADDON_HOST:8099/api/stream"
 ```
+
+Replace `ADDON_HOST` with the hostname shown on the add-on's Info page (`localhost` does not
+work from Home Assistant).
 
 ---
 

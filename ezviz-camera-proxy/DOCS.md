@@ -55,7 +55,7 @@ Edit the add-on configuration:
 | `ezviz_region` | No | `apiieu.ezvizlife.com` | API region (see below) |
 | `camera_serial` | Yes | — | Camera serial number (9 chars) |
 | `camera_password` | Yes | — | Camera verification code (label on device) |
-| `snapshot_interval` | No | `30` | Seconds between cloud snapshots (5–300) |
+| `snapshot_interval` | No | `30` | Seconds between cloud snapshots (min 5, no maximum — e.g. `86400` = daily), or `0` for on-demand only |
 | `enable_mqtt_events` | No | `true` | Publish events to HA MQTT |
 
 ### API Regions
@@ -77,7 +77,7 @@ Click **Start**. The add-on starts a web server on port 8099 accessible via HA I
 
 Once running, open the **Ezviz Camera** panel in the HA sidebar. The dashboard shows:
 
-- Live snapshot (auto-refreshed every `snapshot_interval` seconds)
+- Live snapshot (auto-refreshed every `snapshot_interval` seconds; off in on-demand mode)
 - Manual refresh button
 - Camera status: online/offline, battery level, WiFi signal, firmware version
 - Recent alarm events with type, timestamp and optional alarm image link
@@ -87,6 +87,10 @@ Once running, open the **Ezviz Camera** panel in the HA sidebar. The dashboard s
 
 ## Using as a Home Assistant Camera Entity
 
+> **Hostname:** Home Assistant reaches the add-on over the internal Supervisor network, not
+> `localhost`. Replace `ADDON_HOST` below with the hostname shown on the add-on's **Info** page
+> (also shown in the dashboard's "HA Camera URL" box), e.g. `xxxxxxxx-ezviz-camera-proxy`.
+
 ### Generic Camera (Snapshot)
 
 Add this to your `configuration.yaml`:
@@ -95,7 +99,7 @@ Add this to your `configuration.yaml`:
 camera:
   - platform: generic
     name: "HP2 Door Viewer"
-    still_image_url: "http://localhost:8099/api/snapshot"
+    still_image_url: "http://ADDON_HOST:8099/api/snapshot"
     verify_ssl: false
     scan_interval: 30
 ```
@@ -108,8 +112,8 @@ For a pseudo-live stream:
 camera:
   - platform: generic
     name: "HP2 Door Viewer"
-    still_image_url: "http://localhost:8099/api/snapshot"
-    stream_source: "http://localhost:8099/api/stream"
+    still_image_url: "http://ADDON_HOST:8099/api/snapshot"
+    stream_source: "http://ADDON_HOST:8099/api/stream"
     verify_ssl: false
 ```
 
@@ -122,7 +126,7 @@ camera:
 sensor:
   - platform: rest
     name: "HP2 Battery"
-    resource: "http://localhost:8099/api/status"
+    resource: "http://ADDON_HOST:8099/api/status"
     value_template: "{{ value_json.battery_level }}"
     unit_of_measurement: "%"
     device_class: battery
@@ -130,7 +134,7 @@ sensor:
 
   - platform: rest
     name: "HP2 Online"
-    resource: "http://localhost:8099/api/status"
+    resource: "http://ADDON_HOST:8099/api/status"
     value_template: "{{ value_json.online }}"
     scan_interval: 60
 ```
@@ -208,7 +212,7 @@ automation:
 
 - Increase `snapshot_interval` (e.g., 60 or 120 seconds)
 - Each snapshot fetch causes the HP2 to wake from sleep, which uses battery
-- Consider using MQTT events + on-demand refresh in automations instead of continuous polling
+- Or set `snapshot_interval: 0` (on demand) and call `/api/snapshot/refresh` from automations only when needed
 
 ### Web UI not loading
 

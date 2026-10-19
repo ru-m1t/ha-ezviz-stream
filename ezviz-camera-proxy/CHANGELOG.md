@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.0] — 2026-10-20
+
+### Added
+
+- **On-demand mode:** set `snapshot_interval: 0` to disable background polling.
+  Snapshots are then only fetched via `/api/snapshot/refresh`, which in this
+  mode also refreshes status and events. The dashboard's auto-refresh is off.
+
+### Changed
+
+- `snapshot_interval` no longer has a 300 s maximum, so polling can be set to
+  e.g. once a day (`86400`) or once a week (`604800`).
+
+### Fixed
+
+- Dashboard and docs pointed Home Assistant at `localhost:8099`, which isn't
+  reachable from HA; they now use the add-on hostname.
+
+---
+
 ## [1.0.1] — 2026-04-02
 
 ### Fixed
