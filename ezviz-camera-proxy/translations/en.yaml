@@ -30,8 +30,12 @@ configuration:
     name: Snapshot Interval (seconds)
     description: >-
       How often (in seconds) the add-on fetches a new snapshot from the
-      Ezviz Cloud. Minimum 5, maximum 300 seconds. Lower values increase
-      responsiveness but use more cloud API bandwidth. Recommended: 30.
+      Ezviz Cloud. Minimum 5 seconds, no maximum (e.g. 86400 = once a day,
+      604800 = once a week). Lower values increase responsiveness but use
+      more cloud API bandwidth and camera battery. Recommended: 30.
+      Set to 0 for on-demand mode: no background polling, a snapshot is only
+      fetched when /api/snapshot/refresh is called (dashboard Refresh button
+      or an automation).
   enable_mqtt_events:
     name: Enable MQTT Events
     description: >-

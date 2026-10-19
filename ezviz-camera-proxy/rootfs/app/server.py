@@ -17,6 +17,7 @@ import io
 import json
 import logging
 import os
+import socket
 import threading
 import time
 from datetime import datetime, timezone
@@ -54,6 +55,12 @@ EZVIZ_REGION = os.environ.get("EZVIZ_REGION", "apiieu.ezvizlife.com")
 CAMERA_SERIAL = os.environ.get("CAMERA_SERIAL", "")
 CAMERA_PASSWORD = os.environ.get("CAMERA_PASSWORD", "")
 SNAPSHOT_INTERVAL = int(os.environ.get("SNAPSHOT_INTERVAL", "30"))
+# 0 = on-demand: no background polling, cloud is only queried via /api/snapshot/refresh
+ON_DEMAND = SNAPSHOT_INTERVAL <= 0
+if ON_DEMAND:
+    SNAPSHOT_INTERVAL = 0
+elif SNAPSHOT_INTERVAL < 5:
+    SNAPSHOT_INTERVAL = 5
 ENABLE_MQTT_EVENTS = os.environ.get("ENABLE_MQTT_EVENTS", "true").lower() == "true"
 
 # Ingress support: HA sets INGRESS_ENTRY e.g. "/api/hassio_ingress/abcdef"
@@ -102,9 +109,35 @@ def get_client() -> EzvizClient:
 # Background snapshot poller
 # ---------------------------------------------------------------------------
 
+def _update_status(client: EzvizClient) -> bool:
+    """Fetch device status into _last_status. Returns False on device error."""
+    global _last_status, _status_error
+    try:
+        _last_status = client.get_device_status()
+        _status_error = ""
+        logger.info("Status updated: online=%s, battery=%s, alarm_pic=%s",
+                    _last_status.get('online'),
+                    _last_status.get('battery_level'),
+                    _last_status.get('last_alarm_pic', '')[:80] or 'none')
+        return True
+    except EzvizDeviceError as e:
+        _status_error = str(e)
+        logger.error("Status fetch failed: %s", e)
+        return False
+
+
+def _update_events(client: EzvizClient) -> None:
+    """Fetch recent alarm events into _last_events."""
+    global _last_events
+    try:
+        _last_events = client.get_alarm_list(max_count=10)
+    except Exception as e:
+        logger.error("Event fetch failed: %s", e)
+
+
 def _snapshot_worker():
     """Background thread: fetch a new snapshot every SNAPSHOT_INTERVAL seconds."""
-    global _last_status, _last_events, _snapshot_error, _status_error, _last_snapshot_time
+    global _snapshot_error, _last_snapshot_time
 
     logger.info("Snapshot worker started (interval=%ds)", SNAPSHOT_INTERVAL)
     # Initial delay to allow app startup
@@ -122,17 +155,9 @@ def _snapshot_worker():
                 client.login()
 
             # Fetch status first (lighter call, also provides last_alarm_pic)
-            try:
-                _last_status = client.get_device_status()
-                _status_error = ""
+            if _update_status(client):
                 consecutive_errors = 0
-                logger.info("Status updated: online=%s, battery=%s, alarm_pic=%s",
-                            _last_status.get('online'),
-                            _last_status.get('battery_level'),
-                            _last_status.get('last_alarm_pic', '')[:80] or 'none')
-            except EzvizDeviceError as e:
-                _status_error = str(e)
-                logger.error("Status fetch failed: %s", e)
+            else:
                 consecutive_errors += 1
 
             # Fetch snapshot
@@ -154,10 +179,7 @@ def _snapshot_worker():
                 consecutive_errors += 1
 
             # Fetch recent events
-            try:
-                _last_events = client.get_alarm_list(max_count=10)
-            except Exception as e:
-                logger.error("Event fetch failed: %s", e)
+            _update_events(client)
 
         except EzvizAuthError as e:
             _snapshot_error = f"Auth error: {e}"
@@ -176,7 +198,8 @@ def _snapshot_worker():
 
         # Back off if we're seeing many consecutive errors
         if consecutive_errors > 5:
-            backoff = min(300, SNAPSHOT_INTERVAL * consecutive_errors)
+            # Never retry more often than the normal interval (which may be days)
+            backoff = max(SNAPSHOT_INTERVAL, min(300, SNAPSHOT_INTERVAL * consecutive_errors))
             logger.warning("Many consecutive errors (%d), backing off %ds",
                           consecutive_errors, backoff)
             time.sleep(backoff)
@@ -184,9 +207,12 @@ def _snapshot_worker():
             time.sleep(SNAPSHOT_INTERVAL)
 
 
-# Start background thread
-_worker_thread = threading.Thread(target=_snapshot_worker, daemon=True, name="snapshot-worker")
-_worker_thread.start()
+# Start background thread (not in on-demand mode)
+if ON_DEMAND:
+    logger.info("On-demand mode: background polling disabled")
+else:
+    _worker_thread = threading.Thread(target=_snapshot_worker, daemon=True, name="snapshot-worker")
+    _worker_thread.start()
 
 # ---------------------------------------------------------------------------
 # Helper: get current snapshot bytes
@@ -265,6 +291,7 @@ def index():
         "index.html",
         camera_serial=CAMERA_SERIAL,
         snapshot_interval=SNAPSHOT_INTERVAL,
+        addon_host=socket.gethostname(),
         ingress_entry=INGRESS_ENTRY,
         last_snapshot_time=_last_snapshot_time.isoformat() if _last_snapshot_time else None,
         status=_last_status,
@@ -289,12 +316,19 @@ def api_snapshot():
 
 @app.route("/api/snapshot/refresh", methods=["POST", "GET"])
 def api_snapshot_refresh():
-    """Trigger an immediate snapshot fetch from the cloud."""
+    """Trigger an immediate snapshot fetch from the cloud.
+
+    In on-demand mode this also refreshes status and events, since there is
+    no background worker doing so.
+    """
     global _snapshot_error, _last_snapshot_time
     try:
         client = get_client()
         if not client.is_connected():
             client.login()
+        if ON_DEMAND:
+            _update_status(client)
+            _update_events(client)
         img_bytes = client.get_snapshot()
         if img_bytes:
             with open(CURRENT_SNAPSHOT_FILE, "wb") as f:
@@ -353,7 +387,8 @@ def api_stream():
     Frame rate is determined by SNAPSHOT_INTERVAL (or faster for UI smoothness).
     """
     def generate():
-        frame_delay = max(1.0, SNAPSHOT_INTERVAL / 2)
+        # Capped so manual refreshes show up even with very long intervals
+        frame_delay = min(max(1.0, SNAPSHOT_INTERVAL / 2), 30.0)
         while True:
             img = _get_current_snapshot_bytes()
             if not img:
@@ -427,7 +462,7 @@ if __name__ == "__main__":
     logger.info("Ezviz Camera Proxy starting")
     logger.info("Camera serial : %s", CAMERA_SERIAL or "(not configured)")
     logger.info("Region        : %s", EZVIZ_REGION)
-    logger.info("Snapshot every: %ds", SNAPSHOT_INTERVAL)
+    logger.info("Snapshot every: %s", "on demand" if ON_DEMAND else f"{SNAPSHOT_INTERVAL}s")
     logger.info("Ingress entry : %s", INGRESS_ENTRY or "/")
     logger.info("=" * 60)
 
